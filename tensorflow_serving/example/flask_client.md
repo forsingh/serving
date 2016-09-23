@@ -8,3 +8,5 @@ docker build --pull -t tfs-flask:0.1 -f Dockerfile.devel .
 
 docker run --name=tfs_flask -p 18888:8888 -p 19000:9000 -p 15000:5000 -v /tmp/models:/tmp/models -it tfs-flask:0.1
 
+docker run --name=tfs_flask -p 18888:8888 -p 19000:9000 -p 15000:5000 -v /tmp/models:/tmp/models -it avloss/tfsflask:latest
+
