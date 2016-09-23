@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
         zip \
         zlib1g-dev \
         libcurl3-dev \
+        vim \
         && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -70,14 +71,15 @@ RUN mkdir /bazel && \
     cd / && \
     rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh
 
-EXPOSE 8888 9000 3000
+EXPOSE 8888 9000 5000
 
 RUN cd ~ && \
     git clone --recurse-submodules https://github.com/avloss/serving && \
     cd serving/tensorflow && \
     yes "" | ./configure && \
     cd .. && \
-    bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/... && \
+    #bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/... && \
+    bazel build tensorflow_serving/... && \
     mkdir ~/jupyter_notebooks
 
 RUN export TF_BINARY_URL=https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow-0.10.0-cp27-none-linux_x86_64.whl && \
@@ -85,6 +87,10 @@ RUN export TF_BINARY_URL=https://storage.googleapis.com/tensorflow/linux/cpu/ten
 
 RUN ln -s ~/serving/tensorflow_serving/example/setup_flask_client.sh ~/setup_flask_client.sh
 
+RUN cp ~/serving/tensorflow_serving/example/test_tf_serving_flask.ipynb /root/jupyter_notebooks/
+
+RUN mkdir /tmp/models
+
 # may be create "ln" here?
 #~/serving/tensorflow_serving/example/setup_flask_client.sh
-CMD ["/bin/bash"]
+CMD ["~/setup_flask_client.sh"]

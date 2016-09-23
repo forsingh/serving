@@ -6,5 +6,6 @@
 ~/serving/bazel-bin/tensorflow_serving/example/flask_client &> /tmp/models/flask.log &
 cd ~/jupyter_notebooks
 jupyter notebook --ip=0.0.0.0 &> /tmp/models/jupyter.log &
+cd /tmp/models
 
 /bin/bash
