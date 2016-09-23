@@ -18,8 +18,8 @@ def model_prediction():
     model_name = "default"
     input_name = flask.request.values.get('input_name')
     input_type = flask.request.values.get('input_type')
-    #input = np.matrix(flask.request.values.getlist('input'), dtype=input_type)#.reshape([1,1000])
-    input = np.zeros(1000).reshape([1,1000])
+    input = np.matrix(flask.request.values.getlist('input'), dtype=input_type)#.reshape([1,1000])
+    #input = np.zeros(1000).reshape([1,1000])
 
     channel = implementations.insecure_channel(host, int(port))
     stub = prediction_service_pb2.beta_create_PredictionService_stub(channel)
@@ -28,7 +28,8 @@ def model_prediction():
     request.model_spec.name = model_name
 
     request.inputs[input_name].CopyFrom(
-        tf.contrib.util.make_tensor_proto(input, dtype="float32", shape=(1,1000)))
+        tf.contrib.util.make_tensor_proto(input, dtype=input_type))
+        #tf.contrib.util.make_tensor_proto(input, dtype="float32", shape=(1,1000)))
     result = stub.Predict(request, 10.0)  # 10 secs timeout
     return str(result)
 
