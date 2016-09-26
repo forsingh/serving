@@ -1,8 +1,13 @@
-#this can be run from outside of the docker
+import cPickle as pickle
 
+import numpy as np
 import requests
 import tensorflow as tf
+import numpy as np
 from tensorflow.contrib.session_bundle import exporter
+
+VERSION = 44
+
 
 def create_and_export_model(export_path):
     x = tf.placeholder(tf.int32, shape=[3])
@@ -15,8 +20,6 @@ def create_and_export_model(export_path):
     feed_dict = {x: [3, 4, 5]}
     print(sess.run(y, feed_dict=feed_dict))
 
-    version = 1
-
     print 'Exporting trained model to', export_path
     saver = tf.train.Saver(sharded=True)
     model_exporter = exporter.Exporter(saver)
@@ -25,18 +28,23 @@ def create_and_export_model(export_path):
         named_graph_signatures={
             'inputs': exporter.generic_signature({'x': x}),
             'outputs': exporter.generic_signature({'y': y})})
-    model_exporter.export(export_path, tf.constant(version), sess)
+    model_exporter.export(export_path, tf.constant(VERSION), sess)
+
 
 def test_flask_client():
-    create_and_export_model("/tmp/models")
+    URL = "http://localhost:5000/model_prediction"
 
-    URL = "http://localhost:6000/model_prediction"
+    a = np.array([1, 2, 3], dtype="int32")
+    s = pickle.dumps({"x": a}, protocol=0)
+
     DATA = {"model_name": "default",
-            "input": [1, 2, 3, 4],
-            "input_name": "x",
-            "input_type": "int32"}
+            "input": quote(s)}
 
     r = requests.post(URL, data=DATA)
 
     print r.status_code
     print r.text
+
+if __name__=="__main__":
+    create_and_export_model("/tmp/models")
+    test_flask_client()
