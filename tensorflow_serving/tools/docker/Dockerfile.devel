@@ -34,6 +34,8 @@ RUN pip install enum34 futures mock six && \
     pip install -i https://testpypi.python.org/simple --pre grpcio && \
     pip install flask && \
     pip install jupyter && \
+    pip install scipy && \
+    pip install scikit-learn && \
     pip install requests
 
 # Set up Bazel.
