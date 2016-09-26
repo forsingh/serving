@@ -85,7 +85,7 @@ RUN cd ~ && \
 RUN export TF_BINARY_URL=https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow-0.10.0-cp27-none-linux_x86_64.whl && \
     pip install --ignore-installed --upgrade $TF_BINARY_URL
 
-RUN ln -s ~/serving/tensorflow_serving/example/setup_flask_client.sh ~/setup_flask_client.sh
+RUN ln -s ~/serving/tensorflow_serving/example/setup_flask_client.sh /root/setup_flask_client.sh
 
 RUN cp ~/serving/tensorflow_serving/example/test_tf_serving_flask.ipynb /root/jupyter_notebooks/
 
@@ -93,4 +93,4 @@ RUN mkdir /tmp/models
 
 # may be create "ln" here?
 #~/serving/tensorflow_serving/example/setup_flask_client.sh
-CMD ["bash ~/setup_flask_client.sh"]
+CMD ["bash", "/root/setup_flask_client.sh"]
