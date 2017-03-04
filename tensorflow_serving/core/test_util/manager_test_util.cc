@@ -23,12 +23,36 @@ AspiredVersionsManagerTestAccess::AspiredVersionsManagerTestAccess(
     AspiredVersionsManager* manager)
     : manager_(manager) {}
 
+void AspiredVersionsManagerTestAccess::FlushServables() {
+  manager_->FlushServables();
+}
+
 void AspiredVersionsManagerTestAccess::HandlePendingAspiredVersionsRequests() {
   manager_->HandlePendingAspiredVersionsRequests();
 }
 
 void AspiredVersionsManagerTestAccess::InvokePolicyAndExecuteAction() {
   manager_->InvokePolicyAndExecuteAction();
+}
+
+void AspiredVersionsManagerTestAccess::SetNumLoadThreads(
+    const uint32 num_load_threads) {
+  manager_->SetNumLoadThreads(num_load_threads);
+}
+
+uint32 AspiredVersionsManagerTestAccess::num_load_threads() const {
+  return manager_->num_load_threads();
+}
+
+BasicManagerTestAccess::BasicManagerTestAccess(BasicManager* manager)
+    : manager_(manager) {}
+
+void BasicManagerTestAccess::SetNumLoadThreads(const uint32 num_load_threads) {
+  manager_->SetNumLoadThreads(num_load_threads);
+}
+
+uint32 BasicManagerTestAccess::num_load_threads() const {
+  return manager_->num_load_threads();
 }
 
 CachingManagerTestAccess::CachingManagerTestAccess(CachingManager* manager)

@@ -28,6 +28,7 @@ limitations under the License.
 #include "tensorflow_serving/core/servable_state_monitor.h"
 #include "tensorflow_serving/core/test_util/availability_test_util.h"
 #include "tensorflow_serving/core/test_util/fake_loader.h"
+#include "tensorflow_serving/core/test_util/manager_test_util.h"
 #include "tensorflow_serving/core/test_util/mock_loader.h"
 #include "tensorflow_serving/util/any_ptr.h"
 #include "tensorflow_serving/util/event_bus.h"
@@ -58,6 +59,14 @@ constexpr int kNumVersionsPerServable = 2;
 
 constexpr int kNumThreads = 10;
 
+MATCHER_P(EqualsServableState, servable_state, servable_state.DebugString()) {
+  if (arg == servable_state) {
+    return true;
+  }
+  *result_listener << arg.DebugString();
+  return false;
+}
+
 // Creates a ServableData around a FakeLoader.
 ServableData<std::unique_ptr<Loader>> CreateServable(
     const ServableId& id, const Status load_status = Status::OK()) {
@@ -65,15 +74,21 @@ ServableData<std::unique_ptr<Loader>> CreateServable(
   return CreateServableData(id, std::move(loader));
 }
 
-// We parameterize this test to either run with or without a thread-pool.
-class BasicManagerTest : public ::testing::TestWithParam<int> {
+// We parameterize this test with the number of load & unload threads. (Zero
+// means use an in-line executor instead of a thread pool.)
+struct ThreadPoolSizes {
+  uint64 num_load_threads;
+  uint64 num_unload_threads;
+};
+class BasicManagerTest : public ::testing::TestWithParam<ThreadPoolSizes> {
  protected:
   BasicManagerTest()
-      : num_load_unload_threads_(GetParam()),
+      : thread_pool_sizes_(GetParam()),
         servable_event_bus_(EventBus<ServableState>::CreateEventBus()),
         servable_state_monitor_(servable_event_bus_.get()) {
     BasicManager::Options options;
-    options.num_load_unload_threads = num_load_unload_threads_;
+    options.num_load_threads = thread_pool_sizes_.num_load_threads;
+    options.num_unload_threads = thread_pool_sizes_.num_unload_threads;
     options.servable_event_bus = servable_event_bus_.get();
     options.max_num_load_retries = 10;
     options.load_retry_interval_micros = 0;
@@ -100,15 +115,19 @@ class BasicManagerTest : public ::testing::TestWithParam<int> {
     }
   }
 
-  int num_load_unload_threads_;
+  ThreadPoolSizes thread_pool_sizes_;
   std::shared_ptr<EventBus<ServableState>> servable_event_bus_;
   ServableStateMonitor servable_state_monitor_;
   std::unique_ptr<BasicManager> basic_manager_;
 };
 
-INSTANTIATE_TEST_CASE_P(WithOrWithoutThreadPool, BasicManagerTest,
-                        ::testing::Values(0 /* WithoutThreadPool */,
-                                          kNumThreads));
+INSTANTIATE_TEST_CASE_P(
+    WithOrWithoutThreadPools, BasicManagerTest,
+    ::testing::Values(
+        ThreadPoolSizes{0, 0} /* without load or unload threadpools */,
+        ThreadPoolSizes{2, 0} /* with just a load threadpool */,
+        ThreadPoolSizes{0, 2} /* with just an unload threadpool */,
+        ThreadPoolSizes{4, 4} /* with load and unload threadpools */));
 
 TEST_P(BasicManagerTest, ServableHandleNotFoundMissingLoaderName) {
   ServableHandle<int64> handle;
@@ -167,6 +186,63 @@ TEST_P(BasicManagerTest, ServableHandleLatestVersionIsZero) {
   EXPECT_EQ(id, handle.id());
 }
 
+TEST_P(BasicManagerTest, StopManagingUnknownId) {
+  const ServableId id = {kServableName3, 1};
+  EXPECT_FALSE(basic_manager_->StopManagingServable(id).ok());
+}
+
+TEST_P(BasicManagerTest, StopManagingActiveServable) {
+  const ServableId id = {kServableName3, 1};
+  basic_manager_->ManageServable(CreateServable(id));
+  basic_manager_->LoadServable(
+      id, [](const Status& status) { TF_EXPECT_OK(status); });
+  WaitUntilServableManagerStateIsOneOf(
+      servable_state_monitor_, id, {ServableState::ManagerState::kAvailable});
+  EXPECT_FALSE(basic_manager_->StopManagingServable(id).ok());
+}
+
+TEST_P(BasicManagerTest, StopManagingDisabledServable) {
+  const ServableId id = {kServableName3, 1};
+  basic_manager_->ManageServable(CreateServable(id));
+  basic_manager_->LoadServable(
+      id, [](const Status& status) { TF_EXPECT_OK(status); });
+  WaitUntilServableManagerStateIsOneOf(
+      servable_state_monitor_, id, {ServableState::ManagerState::kAvailable});
+  basic_manager_->UnloadServable(
+      id, [](const Status& status) { TF_EXPECT_OK(status); });
+  WaitUntilServableManagerStateIsOneOf(servable_state_monitor_, id,
+                                       {ServableState::ManagerState::kEnd});
+  const optional<ServableStateSnapshot<>> snapshot =
+      basic_manager_->GetManagedServableStateSnapshot(id);
+  EXPECT_EQ(LoaderHarness::State::kDisabled, snapshot->state);
+  const ServableState expected_state = {id, ServableState::ManagerState::kEnd,
+                                        Status::OK()};
+  EXPECT_THAT(*servable_state_monitor_.GetState(id),
+              EqualsServableState(expected_state));
+
+  TF_ASSERT_OK(basic_manager_->StopManagingServable(id));
+  EXPECT_FALSE(basic_manager_->GetManagedServableStateSnapshot(id));
+}
+
+TEST_P(BasicManagerTest, DontStopManagingOnError) {
+  const ServableId id = {kServableName, 7};
+  const Status error_status = errors::Internal("An error.");
+  std::unique_ptr<Loader> loader(new FakeLoader(7, error_status));
+  basic_manager_->ManageServable({id, std::move(loader)});
+  basic_manager_->LoadServable(id, [error_status](const Status& status) {
+    EXPECT_EQ(error_status, status);
+  });
+  WaitUntilServableManagerStateIsOneOf(servable_state_monitor_, id,
+                                       {ServableState::ManagerState::kEnd});
+  const optional<ServableStateSnapshot<>> snapshot =
+      basic_manager_->GetManagedServableStateSnapshot(id);
+  EXPECT_EQ(LoaderHarness::State::kError, snapshot->state);
+  const ServableState expected_error_state = {
+      id, ServableState::ManagerState::kEnd, error_status};
+  EXPECT_THAT(*servable_state_monitor_.GetState(id),
+              EqualsServableState(expected_error_state));
+}
+
 TEST_P(BasicManagerTest, ServableHandleSpecificVersion) {
   ServableHandle<int64> handle;
   const ServableId id = {kServableName2, 1};
@@ -198,7 +274,7 @@ TEST_P(BasicManagerTest, UpdateServingMapServableHandleLatest) {
       .WillByDefault(Return(AnyPtr(&servable)));
   ON_CALL(*notify_to_unload, EstimateResources(_))
       .WillByDefault(Return(Status::OK()));
-  ON_CALL(*notify_to_unload, Load(_)).WillByDefault(Return(Status::OK()));
+  ON_CALL(*notify_to_unload, Load()).WillByDefault(Return(Status::OK()));
   const ServableId id1 = {kServableName3, 1};
   basic_manager_->ManageServable(
       {id1, std::unique_ptr<Loader>(notify_to_unload)});
@@ -456,9 +532,10 @@ TEST_P(BasicManagerTest, DestructOnNonServingThread) {
             id, [](const Status& status) { TF_ASSERT_OK(status); });
         WaitUntilServableManagerStateIsOneOf(
             servable_state_monitor_, id, {ServableState::ManagerState::kEnd});
+        basic_manager_->StopManagingServable(id);
         // The servable has been deleted in this thread if there is no
         // thread-pool for load/unload.
-        if (num_load_unload_threads_ == 0) {
+        if (thread_pool_sizes_.num_load_threads == 0) {
           EXPECT_TRUE(FakeLoader::was_deleted_in_this_thread());
         }
         done_unload_servable.Notify();
@@ -509,8 +586,7 @@ TEST_P(BasicManagerTest, MultipleLoadServables) {
   basic_manager_->LoadServable(id, [](const Status& status) {
     EXPECT_FALSE(status.ok());
     EXPECT_EQ(error::FAILED_PRECONDITION, status.code());
-    EXPECT_THAT(status.error_message(),
-                HasSubstr("cannot be transitioned to load-requested"));
+    EXPECT_THAT(status.error_message(), HasSubstr("Duplicate load request"));
   });
 }
 
@@ -527,8 +603,9 @@ TEST_P(BasicManagerTest, MultipleUnloadServables) {
                                        {ServableState::ManagerState::kEnd});
   basic_manager_->UnloadServable(id, [](const Status& status) {
     EXPECT_FALSE(status.ok());
-    EXPECT_EQ(error::NOT_FOUND, status.code());
-    EXPECT_THAT(status.error_message(), HasSubstr("is not being managed"));
+    EXPECT_EQ(error::FAILED_PRECONDITION, status.code());
+    EXPECT_THAT(status.error_message(),
+                HasSubstr("unload already requested/ongoing"));
   });
 }
 
@@ -547,17 +624,8 @@ TEST_P(BasicManagerTest, UnloadWithoutLoad) {
   basic_manager_->UnloadServable(id, [](const Status& status) {
     EXPECT_FALSE(status.ok());
     EXPECT_EQ(error::FAILED_PRECONDITION, status.code());
-    EXPECT_THAT(status.error_message(),
-                HasSubstr("cannot be transitioned to unload-requested"));
+    EXPECT_THAT(status.error_message(), HasSubstr("Servable not loaded"));
   });
-}
-
-MATCHER_P(EqualsServableState, servable_state, servable_state.DebugString()) {
-  if (arg == servable_state) {
-    return true;
-  }
-  *result_listener << arg.DebugString();
-  return false;
 }
 
 TEST_P(BasicManagerTest, EventBusErroneousVersion) {
@@ -604,12 +672,11 @@ TEST_P(BasicManagerTest, EventBusServableLifecycle) {
 
   Notification load_called;
   Notification load_continue;
-  EXPECT_CALL(*loader, Load(_))
-      .WillOnce(InvokeWithoutArgs([&]() {
-        load_called.Notify();
-        load_continue.WaitForNotification();
-        return Status::OK();
-      }));
+  EXPECT_CALL(*loader, Load()).WillOnce(InvokeWithoutArgs([&]() {
+    load_called.Notify();
+    load_continue.WaitForNotification();
+    return Status::OK();
+  }));
 
   std::unique_ptr<Thread> load_thread(
       Env::Default()->StartThread(ThreadOptions(), "LoadThread", [&]() {
@@ -666,7 +733,7 @@ TEST_P(BasicManagerTest, EventBusServableLifecycle) {
 TEST_P(BasicManagerTest, NoEventBus) {
   BasicManager::Options options;
   // Single threaded execution.
-  options.num_load_unload_threads = 0;
+  options.num_load_threads = 0;
   // No event bus.
   options.servable_event_bus = nullptr;
   std::unique_ptr<BasicManager> manager;
@@ -737,6 +804,133 @@ TEST_P(BasicManagerTest, InterleavedLoadsAndUnloads) {
   }
 }
 
+class SetNumLoadThreadsBasicManagerTest : public ::testing::Test {
+ protected:
+  SetNumLoadThreadsBasicManagerTest() {
+    BasicManager::Options options;
+    options.num_load_threads = 0;
+    options.max_num_load_retries = 10;
+    options.load_retry_interval_micros = 0;
+    TF_CHECK_OK(BasicManager::Create(std::move(options), &basic_manager_));
+  }
+
+  std::unique_ptr<BasicManager> basic_manager_;
+};
+
+TEST_F(SetNumLoadThreadsBasicManagerTest, ThreadPoolSwapped) {
+  test_util::BasicManagerTestAccess manager_test_access(basic_manager_.get());
+  manager_test_access.SetNumLoadThreads(2);
+  EXPECT_EQ(2, manager_test_access.num_load_threads());
+
+  const auto load_done_fn = [&](const Status& status) {
+    TF_ASSERT_OK(status);
+    // Tests whether the threadpools are actually swapped in
+    // SetNumLoadThreads().
+    static thread_local int per_thread_load_ctr = 0;
+    ++per_thread_load_ctr;
+    EXPECT_EQ(1, per_thread_load_ctr);
+  };
+
+  const ServableId id0 = {kServableName3, 0};
+  basic_manager_->ManageServable(CreateServable(id0));
+  basic_manager_->LoadServable(id0, load_done_fn);
+
+  manager_test_access.SetNumLoadThreads(0);
+  EXPECT_EQ(0, manager_test_access.num_load_threads());
+
+  const ServableId id1 = {kServableName3, 1};
+  basic_manager_->ManageServable(CreateServable(id1));
+  basic_manager_->LoadServable(id1, load_done_fn);
+
+  // Force the manager to finish before deleting the notifications.
+  basic_manager_.reset();
+}
+
+TEST_F(SetNumLoadThreadsBasicManagerTest, ThreadPoolsNotAliveSimultaneously) {
+  test_util::BasicManagerTestAccess manager_test_access(basic_manager_.get());
+  manager_test_access.SetNumLoadThreads(1);
+  EXPECT_EQ(1, manager_test_access.num_load_threads());
+
+  std::set<string> data_race_set;
+  const auto data_race_fn = [&](const Status& status) {
+    // This line will cause a data race if both the loads happen simultaneously
+    // on different threads. This will be caught by the ThreadSanitizer, causing
+    // the test to fail.
+    data_race_set.insert("string");
+  };
+
+  const ServableId id0 = {kServableName3, 0};
+  basic_manager_->ManageServable(CreateServable(id0));
+  Notification notify_for_setting;
+  Notification continue_load;
+  basic_manager_->LoadServable(id0, [&](const Status& status) {
+    notify_for_setting.Notify();
+    continue_load.WaitForNotification();
+    data_race_fn(status);
+  });
+
+  {
+    ThreadPoolExecutor executor(Env::Default(), "SetNumLoadThreads",
+                                kNumThreads);
+    executor.Schedule([&]() {
+      notify_for_setting.WaitForNotification();
+      manager_test_access.SetNumLoadThreads(1);
+      EXPECT_EQ(1, manager_test_access.num_load_threads());
+    });
+
+    executor.Schedule([&]() {
+      const ServableId id1 = {kServableName3, 1};
+      basic_manager_->ManageServable(CreateServable(id1));
+      continue_load.Notify();
+      basic_manager_->LoadServable(
+          id1, [&](const Status& status) { data_race_fn(status); });
+    });
+  }
+
+  // Force the manager to finish before deleting the notifications.
+  basic_manager_.reset();
+}
+
+// Tests whether the fast-load scenario works. In the fast-load scenario we try
+// to load a bunch of servables as fast as possible using a lot of threads.
+TEST_F(SetNumLoadThreadsBasicManagerTest, FastLoad) {
+  test_util::BasicManagerTestAccess manager_test_access(basic_manager_.get());
+  const uint32 prev_num_load_threads = manager_test_access.num_load_threads();
+  manager_test_access.SetNumLoadThreads(32);
+  EXPECT_EQ(32, manager_test_access.num_load_threads());
+
+  {
+    ThreadPoolExecutor executor(Env::Default(), "FirstThreadPoolLoads",
+                                kNumThreads);
+    for (int i = 0; i < 20; ++i) {
+      executor.Schedule([this, i]() {
+        const ServableId id = {kServableName3, i};
+        basic_manager_->ManageServable(CreateServable(id));
+        basic_manager_->LoadServable(
+            id, [](const Status& status) { TF_ASSERT_OK(status); });
+        // We don't wait for load to be done here because we want to test that
+        // SetNumLoadThreads() waits properly till all queued loads are
+        // finished.  If a queued load hasn't been finished the corresponding
+        // UnloadServable() will fail.
+      });
+    }
+  }
+
+  manager_test_access.SetNumLoadThreads(prev_num_load_threads);
+  EXPECT_EQ(prev_num_load_threads, manager_test_access.num_load_threads());
+
+  {
+    ThreadPoolExecutor executor(Env::Default(), "Unloads", kNumThreads);
+    for (int i = 0; i < 20; ++i) {
+      executor.Schedule([this, i]() {
+        const ServableId id = {kServableName3, i};
+        basic_manager_->UnloadServable(
+            id, [](const Status& status) { TF_ASSERT_OK(status); });
+      });
+    }
+  }
+}
+
 TEST_P(BasicManagerTest, ConcurrentLoadsOnlyOneSucceeds) {
   const ServableId id = {kServableName3, 0};
   mutex status_mu;
@@ -766,7 +960,7 @@ TEST_P(BasicManagerTest, ConcurrentLoadsOnlyOneSucceeds) {
     if (!statuses[i].ok()) {
       EXPECT_EQ(error::FAILED_PRECONDITION, statuses[i].code());
       EXPECT_THAT(statuses[i].error_message(),
-                  HasSubstr("cannot be transitioned to load-requested"));
+                  HasSubstr("Duplicate load request"));
     } else {
       ++num_status_ok;
     }
@@ -815,7 +1009,7 @@ TEST_P(BasicManagerTest, ConcurrentUnloadsOnlyOneSucceeds) {
                     HasSubstr("not being managed"));
       } else {
         EXPECT_THAT(statuses[i].error_message(),
-                    HasSubstr("cannot be transitioned to unload-requested"));
+                    HasSubstr("unload already requested/ongoing"));
       }
     } else {
       ++num_status_ok;
@@ -828,7 +1022,7 @@ TEST_P(BasicManagerTest, RetryOnLoadErrorFinallySucceeds) {
   const ServableId id = {kServableName, 7};
   test_util::MockLoader* loader = new NiceMock<test_util::MockLoader>();
   basic_manager_->ManageServable({id, std::unique_ptr<Loader>(loader)});
-  EXPECT_CALL(*loader, Load(_))
+  EXPECT_CALL(*loader, Load())
       .WillOnce(Return(errors::Internal("Load error.")))
       .WillRepeatedly(Return(Status::OK()));
   basic_manager_->LoadServable(
@@ -839,7 +1033,7 @@ TEST_P(BasicManagerTest, RetryOnLoadErrorFinallyFails) {
   const ServableId id = {kServableName, 7};
   test_util::MockLoader* loader = new NiceMock<test_util::MockLoader>();
   basic_manager_->ManageServable({id, std::unique_ptr<Loader>(loader)});
-  EXPECT_CALL(*loader, Load(_))
+  EXPECT_CALL(*loader, Load())
       .WillRepeatedly(Return(errors::Internal("Load error.")));
   basic_manager_->LoadServable(id, [](const Status& status) {
     EXPECT_EQ(errors::Internal("Load error."), status);
@@ -854,7 +1048,7 @@ TEST_P(BasicManagerTest, RetryOnLoadErrorCancelledLoad) {
 
   Notification load_called;
   Notification load_should_return;
-  EXPECT_CALL(*loader, Load(_))
+  EXPECT_CALL(*loader, Load())
       .WillOnce(InvokeWithoutArgs([&load_called, &load_should_return]() {
         load_called.Notify();
         load_should_return.WaitForNotification();
@@ -881,7 +1075,7 @@ TEST_P(BasicManagerTest, LoadAfterCancelledLoad) {
 
   Notification load_called;
   Notification load_should_return;
-  EXPECT_CALL(*loader, Load(_))
+  EXPECT_CALL(*loader, Load())
       .WillOnce(InvokeWithoutArgs([&load_called, &load_should_return]() {
         load_called.Notify();
         load_should_return.WaitForNotification();
@@ -935,8 +1129,9 @@ class ResourceConstrainedBasicManagerTest : public ::testing::Test {
     // Seed the manager with ten resource units.
     options.resource_tracker = CreateSimpleResourceTracker(10);
     options.servable_event_bus = servable_event_bus_.get();
-    // Allow up to two load/unload requests to be processed concurrently.
-    options.num_load_unload_threads = 2;
+    // Allow up to two loads and two unloads to be processed concurrently.
+    options.num_load_threads = 2;
+    options.num_unload_threads = 2;
     // We don't want retries.
     options.max_num_load_retries = 0;
     TF_CHECK_OK(BasicManager::Create(std::move(options), &basic_manager_));
@@ -959,7 +1154,7 @@ class BarrierLoader : public Loader {
     return Status::OK();
   }
 
-  Status Load(const ResourceAllocation& available_resources) override {
+  Status Load() override {
     counter_->DecrementCount();
     counter_->Wait();
     return Status::OK();
@@ -1002,7 +1197,7 @@ TEST_F(ResourceConstrainedBasicManagerTest, InsufficientResources) {
         *estimate = CreateResourceQuantity(10 /* = total system resources */);
         return Status::OK();
       }));
-  EXPECT_CALL(*hogging_loader, Load(_)).WillOnce(Return(Status::OK()));
+  EXPECT_CALL(*hogging_loader, Load()).WillOnce(Return(Status::OK()));
   basic_manager_->ManageServable(
       CreateServableData(hogging_id, std::unique_ptr<Loader>(hogging_loader)));
   Notification hogging_loaded;
@@ -1038,6 +1233,11 @@ TEST_F(ResourceConstrainedBasicManagerTest, InsufficientResources) {
       rejected_id, ServableState::ManagerState::kEnd, rejected_status};
   EXPECT_THAT(*servable_state_monitor_.GetState(rejected_id),
               EqualsServableState(expected_error_state));
+
+  // Make sure we're still managing the rejected servable.
+  const optional<ServableStateSnapshot<>> snapshot =
+      basic_manager_->GetManagedServableStateSnapshot(rejected_id);
+  EXPECT_EQ(LoaderHarness::State::kError, snapshot->state);
 }
 
 TEST_F(ResourceConstrainedBasicManagerTest, ResourcesReleasedIfLoadFails) {
@@ -1049,7 +1249,7 @@ TEST_F(ResourceConstrainedBasicManagerTest, ResourcesReleasedIfLoadFails) {
         *estimate = CreateResourceQuantity(10);
         return Status::OK();
       }));
-  EXPECT_CALL(*failing_loader, Load(_))
+  EXPECT_CALL(*failing_loader, Load())
       .WillOnce(Return(errors::Unknown("Load failure")));
   basic_manager_->ManageServable(
       CreateServableData(failing_id, std::unique_ptr<Loader>(failing_loader)));
@@ -1072,7 +1272,7 @@ TEST_F(ResourceConstrainedBasicManagerTest, ResourcesReleasedIfLoadFails) {
         *estimate = CreateResourceQuantity(10);
         return Status::OK();
       }));
-  EXPECT_CALL(*succeeding_loader, Load(_)).WillOnce(Return(Status::OK()));
+  EXPECT_CALL(*succeeding_loader, Load()).WillOnce(Return(Status::OK()));
   basic_manager_->ManageServable(CreateServableData(
       succeeding_id, std::unique_ptr<Loader>(succeeding_loader)));
   basic_manager_->LoadServable(
@@ -1093,7 +1293,7 @@ TEST_F(ResourceConstrainedBasicManagerTest,
           return Status::OK();
         }))
         .RetiresOnSaturation();
-    EXPECT_CALL(*overestimating_loader, Load(_)).WillOnce(Return(Status::OK()));
+    EXPECT_CALL(*overestimating_loader, Load()).WillOnce(Return(Status::OK()));
     EXPECT_CALL(*overestimating_loader, EstimateResources(_))
         .WillOnce(Invoke([](ResourceAllocation* estimate) {
           *estimate = CreateResourceQuantity(5 /* lower estimate after load */);
@@ -1122,7 +1322,7 @@ TEST_F(ResourceConstrainedBasicManagerTest,
         *estimate = CreateResourceQuantity(5);
         return Status::OK();
       }));
-  EXPECT_CALL(*succeeding_loader, Load(_)).WillOnce(Return(Status::OK()));
+  EXPECT_CALL(*succeeding_loader, Load()).WillOnce(Return(Status::OK()));
   basic_manager_->ManageServable(CreateServableData(
       succeeding_id, std::unique_ptr<Loader>(succeeding_loader)));
   basic_manager_->LoadServable(
@@ -1138,7 +1338,7 @@ TEST_F(ResourceConstrainedBasicManagerTest, ResourcesReleasedAfterUnload) {
         return Status::OK();
       }));
   Notification load_done;
-  EXPECT_CALL(*unloading_loader, Load(_)).WillOnce(Return(Status::OK()));
+  EXPECT_CALL(*unloading_loader, Load()).WillOnce(Return(Status::OK()));
   basic_manager_->ManageServable(CreateServableData(
       unloading_id, std::unique_ptr<Loader>(unloading_loader)));
   basic_manager_->LoadServable(unloading_id,
@@ -1174,7 +1374,7 @@ TEST_F(ResourceConstrainedBasicManagerTest, ResourcesReleasedAfterUnload) {
         *estimate = CreateResourceQuantity(10);
         return Status::OK();
       }));
-  EXPECT_CALL(*succeeding_loader, Load(_)).WillOnce(Return(Status::OK()));
+  EXPECT_CALL(*succeeding_loader, Load()).WillOnce(Return(Status::OK()));
   basic_manager_->ManageServable(CreateServableData(
       succeeding_id, std::unique_ptr<Loader>(succeeding_loader)));
   basic_manager_->LoadServable(
@@ -1199,7 +1399,7 @@ TEST_F(ResourceConstrainedBasicManagerTest, FirstLoadDeniedSecondOneApproved) {
         return Status::OK();
       }));
   // Load won't be called because resources are not enough to load it.
-  EXPECT_CALL(*denied_loader, Load(_)).Times(0);
+  EXPECT_CALL(*denied_loader, Load()).Times(0);
   basic_manager_->ManageServable(
       CreateServableData(denied_id, std::unique_ptr<Loader>(denied_loader)));
 
@@ -1226,9 +1426,8 @@ TEST_F(ResourceConstrainedBasicManagerTest, FirstLoadDeniedSecondOneApproved) {
   denied_estimate_started.WaitForNotification();
   // The second servable's Load() call shouldn't occur until after the first
   // servable's load request exits its decision phase.
-  EXPECT_CALL(*succeeding_loader, Load(_))
-      .WillOnce(Invoke([&finish_denied_estimate](
-          const ResourceAllocation& available_resources) {
+  EXPECT_CALL(*succeeding_loader, Load())
+      .WillOnce(Invoke([&finish_denied_estimate]() {
         // Ensure that the first servable's load request has been given
         // permission to exit its decision phase.
         EXPECT_TRUE(finish_denied_estimate.HasBeenNotified());
@@ -1258,6 +1457,98 @@ TEST_F(ResourceConstrainedBasicManagerTest, FirstLoadDeniedSecondOneApproved) {
       denied_id, ServableState::ManagerState::kEnd, denied_load_status};
   EXPECT_THAT(*servable_state_monitor_.GetState(denied_id),
               EqualsServableState(expected_error_state));
+}
+
+TEST_F(ResourceConstrainedBasicManagerTest, EventBusErrorOnEstimateResources) {
+  const ServableId id = {kServableName, 7};
+  test_util::MockLoader* loader = new NiceMock<test_util::MockLoader>;
+  EXPECT_CALL(*loader, EstimateResources(_))
+      .WillOnce(Return(errors::Internal("Error on estimate resources.")));
+  basic_manager_->ManageServable(
+      CreateServableData(id, std::unique_ptr<Loader>(loader)));
+  basic_manager_->LoadServable(
+      id, [](const Status& status) { EXPECT_FALSE(status.ok()); });
+  WaitUntilServableManagerStateIsOneOf(servable_state_monitor_, id,
+                                       {ServableState::ManagerState::kEnd});
+  const ServableState error_state = {
+      id, ServableState::ManagerState::kEnd,
+      errors::Internal(strings::StrCat(
+          "Error while attempting to reserve resources to load servable ",
+          id.DebugString(), ": Error on estimate resources."))};
+  EXPECT_THAT(*servable_state_monitor_.GetState(id),
+              EqualsServableState(error_state));
+}
+
+TEST(EstimateResourcesRetriedTest, Succeeds) {
+  std::shared_ptr<EventBus<ServableState>> servable_event_bus =
+      EventBus<ServableState>::CreateEventBus();
+  ServableStateMonitor servable_state_monitor(servable_event_bus.get());
+
+  BasicManager::Options options;
+  // Seed the manager with ten resource units.
+  options.resource_tracker = CreateSimpleResourceTracker(10);
+  options.servable_event_bus = servable_event_bus.get();
+  options.num_load_threads = 0;
+  options.num_unload_threads = 0;
+
+  options.max_num_load_retries = 1;
+  options.load_retry_interval_micros = 0;
+
+  std::unique_ptr<BasicManager> basic_manager;
+  TF_CHECK_OK(BasicManager::Create(std::move(options), &basic_manager));
+
+  const ServableId id = {kServableName, 7};
+  test_util::MockLoader* loader = new NiceMock<test_util::MockLoader>;
+  EXPECT_CALL(*loader, EstimateResources(_))
+      .WillOnce(Return(errors::Internal("Error on estimate resources.")))
+      .WillOnce(Return(Status::OK()));
+  EXPECT_CALL(*loader, Load()).WillRepeatedly(Return(Status::OK()));
+  basic_manager->ManageServable(
+      CreateServableData(id, std::unique_ptr<Loader>(loader)));
+  basic_manager->LoadServable(
+      id, [](const Status& status) { EXPECT_TRUE(status.ok()); });
+  WaitUntilServableManagerStateIsOneOf(
+      servable_state_monitor, id, {ServableState::ManagerState::kAvailable});
+  const ServableState available_state = {
+      id, ServableState::ManagerState::kAvailable, Status::OK()};
+  EXPECT_THAT(*servable_state_monitor.GetState(id),
+              EqualsServableState(available_state));
+}
+
+TEST(EstimateResourcesRetriedTest, Fails) {
+  std::shared_ptr<EventBus<ServableState>> servable_event_bus =
+      EventBus<ServableState>::CreateEventBus();
+  ServableStateMonitor servable_state_monitor(servable_event_bus.get());
+
+  BasicManager::Options options;
+  // Seed the manager with ten resource units.
+  options.resource_tracker = CreateSimpleResourceTracker(10);
+  options.servable_event_bus = servable_event_bus.get();
+  options.num_load_threads = 0;
+  options.num_unload_threads = 0;
+
+  options.max_num_load_retries = 1;
+  options.load_retry_interval_micros = 0;
+
+  std::unique_ptr<BasicManager> basic_manager;
+  TF_CHECK_OK(BasicManager::Create(std::move(options), &basic_manager));
+
+  const ServableId id = {kServableName, 7};
+  test_util::MockLoader* loader = new NiceMock<test_util::MockLoader>;
+  EXPECT_CALL(*loader, EstimateResources(_))
+      .WillOnce(Return(errors::Internal("Error on estimate resources.")))
+      .WillOnce(Return(errors::Internal("Error on estimate resources.")))
+      .WillRepeatedly(Return(Status::OK()));
+  basic_manager->ManageServable(
+      CreateServableData(id, std::unique_ptr<Loader>(loader)));
+  basic_manager->LoadServable(
+      id, [](const Status& status) { EXPECT_FALSE(status.ok()); });
+  WaitUntilServableManagerStateIsOneOf(servable_state_monitor, id,
+                                       {ServableState::ManagerState::kEnd});
+  const ServableState available_state = {
+      id, ServableState::ManagerState::kEnd,
+      errors::Internal("Error on estimate resources.")};
+  EXPECT_FALSE(servable_state_monitor.GetState(id)->health.ok());
 }
 
 }  // namespace

@@ -20,6 +20,8 @@ The model is exported with proper signatures that can be loaded by standard
 tensorflow_model_server.
 """
 
+from __future__ import print_function
+
 import os.path
 
 # This is a placeholder for a Google-internal import.
@@ -65,7 +67,12 @@ def export():
     # Please refer to Tensorflow inception model for details.
 
     # Input transformation.
-    jpegs = tf.placeholder(tf.string)
+    serialized_tf_example = tf.placeholder(tf.string, name='tf_example')
+    feature_configs = {
+        'image/encoded': tf.FixedLenFeature(shape=[], dtype=tf.string),
+    }
+    tf_example = tf.parse_example(serialized_tf_example, feature_configs)
+    jpegs = tf_example['image/encoded']
     images = tf.map_fn(preprocess_image, jpegs, dtype=tf.float32)
 
     # Run inference.
@@ -108,11 +115,21 @@ def export():
 
       # Export inference model.
       init_op = tf.group(tf.initialize_all_tables(), name='init_op')
-      model_exporter = exporter.Exporter(saver)
-      model_exporter.init(init_op=init_op, named_graph_signatures={
+      classification_signature = exporter.classification_signature(
+          input_tensor=serialized_tf_example,
+          classes_tensor=classes,
+          scores_tensor=values)
+      named_graph_signature = {
           'inputs': exporter.generic_signature({'images': jpegs}),
-          'outputs': exporter.generic_signature({'classes': classes,
-                                                 'scores': values})})
+          'outputs': exporter.generic_signature({
+              'classes': classes,
+              'scores': values
+          })}
+      model_exporter = exporter.Exporter(saver)
+      model_exporter.init(
+          init_op=init_op,
+          default_graph_signature=classification_signature,
+          named_graph_signatures=named_graph_signature)
       model_exporter.export(FLAGS.export_dir, tf.constant(global_step), sess)
       print('Successfully exported model to %s' % FLAGS.export_dir)
 
@@ -139,8 +156,8 @@ def preprocess_image(image_buffer):
                                    align_corners=False)
   image = tf.squeeze(image, [0])
   # Finally, rescale to [-1,1] instead of [0, 1)
-  image = tf.sub(image, 0.5)
-  image = tf.mul(image, 2.0)
+  image = tf.subtract(image, 0.5)
+  image = tf.multiply(image, 2.0)
   return image
 
 

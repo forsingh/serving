@@ -42,8 +42,16 @@ limitations under the License.
 namespace tensorflow {
 namespace serving {
 
+class AspiredVersionsManager;
+
 namespace internal {
+
 class AspiredVersionsManagerTargetImpl;
+
+Status ConnectSourceWithFastInitialLoad(
+    AspiredVersionsManager* manager, Source<std::unique_ptr<Loader>>* source,
+    const std::function<Status()>& wait_until_loaded_fn, uint32 num_threads);
+
 }  // namespace internal
 
 namespace test_util {
@@ -86,12 +94,17 @@ class AspiredVersionsManager : public Manager,
     // The AspiredVersionPolicy to use for the manager. Must be non-null.
     std::unique_ptr<AspiredVersionPolicy> aspired_version_policy;
 
-    // The number of threads in the thread-pool used to load and unload
-    // servables.
+    // The number of threads in the thread-pool used to load servables.
     //
-    // If set as 0, we don't use a thread-pool, and servable loads/unloads are
+    // If set as 0, we don't use a thread-pool, and servable loads are performed
+    // serially in the manager's main work loop.
+    uint32 num_load_threads = 0;
+
+    // The number of threads in the thread-pool used to unload servables.
+    //
+    // If set as 0, we don't use a thread-pool, and servable unloads are
     // performed serially in the manager's main work loop.
-    uint32 num_load_unload_threads = 0;
+    uint32 num_unload_threads = 0;
 
     // Maximum number of times we retry loading a servable, after the first
     // failure, before we give up.
@@ -170,6 +183,10 @@ class AspiredVersionsManager : public Manager,
  private:
   friend class internal::AspiredVersionsManagerTargetImpl;
   friend class test_util::AspiredVersionsManagerTestAccess;
+  friend class ServerCore;
+  friend Status internal::ConnectSourceWithFastInitialLoad(
+      AspiredVersionsManager* manager, Source<std::unique_ptr<Loader>>* source,
+      const std::function<Status()>& wait_until_loaded_fn, uint32 num_threads);
 
   AspiredVersionsManager(
       int64 manage_state_interval_micros, Env* env,
@@ -215,6 +232,12 @@ class AspiredVersionsManager : public Manager,
   optional<AspiredVersionPolicy::ServableAction> GetNextAction()
       EXCLUSIVE_LOCKS_REQUIRED(basic_manager_read_modify_write_mu_);
 
+  // Checks for servables that are not aspired and at some final state and tells
+  // 'basic_manager_' to forget about them. This method is intended to be
+  // invoked periodically, interleaved with InvokePolicyAndExecuteAction() and
+  // HandlePendingAspiredVersionsRequests().
+  void FlushServables() LOCKS_EXCLUDED(basic_manager_read_modify_write_mu_);
+
   // Handles enqueued aspired-versions requests. This method is intended to be
   // invoked periodically, interleaved with InvokePolicyAndExecuteAction().
   void HandlePendingAspiredVersionsRequests()
@@ -225,6 +248,13 @@ class AspiredVersionsManager : public Manager,
   // This method is intended to be invoked periodically.
   void InvokePolicyAndExecuteAction()
       LOCKS_EXCLUDED(basic_manager_read_modify_write_mu_);
+
+  // Sets the number of load threads.
+  //
+  // We immediately block all new load requests while the current executor is
+  // destructed, a new one is created and then swapped with the current one.
+  void SetNumLoadThreads(uint32 num_load_threads);
+  uint32 num_load_threads() const;
 
   std::unique_ptr<AspiredVersionPolicy> aspired_version_policy_;
 

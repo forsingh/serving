@@ -38,14 +38,15 @@ def Export():
     # Calculate, y = a*x + b
     # here we use a placeholder 'x' which is fed at inference time.
     x = tf.placeholder(tf.float32)
-    y = tf.add(tf.mul(a, x), b)
+    y = tf.add(tf.multiply(a, x), b)
 
     # Run an export.
     tf.initialize_all_variables().run()
     export = exporter.Exporter(tf.train.Saver())
     export.init(named_graph_signatures={
         "inputs": exporter.generic_signature({"x": x}),
-        "outputs": exporter.generic_signature({"y": y})
+        "outputs": exporter.generic_signature({"y": y}),
+        "regress": exporter.regression_signature(x, y)
     })
     export.export(export_path, tf.constant(123), sess)
 

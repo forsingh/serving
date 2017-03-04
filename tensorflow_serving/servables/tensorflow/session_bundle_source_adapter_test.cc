@@ -23,17 +23,13 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "tensorflow/contrib/session_bundle/session_bundle.h"
-#include "tensorflow/core/framework/tensor_testutil.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/core/status_test_util.h"
-#include "tensorflow/core/lib/io/path.h"
-#include "tensorflow/core/platform/types.h"
-#include "tensorflow/core/public/session.h"
 #include "tensorflow_serving/core/loader.h"
 #include "tensorflow_serving/core/servable_data.h"
-#include "tensorflow_serving/core/servable_id.h"
-#include "tensorflow_serving/core/source_adapter.h"
 #include "tensorflow_serving/core/test_util/source_adapter_test_util.h"
+#include "tensorflow_serving/resources/resources.pb.h"
+#include "tensorflow_serving/servables/tensorflow/bundle_factory_test_util.h"
 #include "tensorflow_serving/servables/tensorflow/session_bundle_config.pb.h"
 #include "tensorflow_serving/servables/tensorflow/session_bundle_source_adapter.pb.h"
 #include "tensorflow_serving/test_util/test_util.h"
@@ -47,38 +43,13 @@ using test_util::EqualsProto;
 class SessionBundleSourceAdapterTest : public ::testing::Test {
  protected:
   SessionBundleSourceAdapterTest()
-      : export_dir_(test_util::ContribTestSrcDirPath(
-            "session_bundle/example/half_plus_two/00000123")) {}
+      : export_dir_(test_util::GetTestSessionBundleExportPath()) {}
 
   // Test data path, to be initialized to point at an export of half-plus-two.
   const string export_dir_;
 
-  // Test that a SessionBundle handles a single request for the half plus two
-  // model properly. The request has size=2, for batching purposes.
-  void TestSingleRequest(const SessionBundle* bundle) {
-    Tensor input = test::AsTensor<float>({100.0f, 42.0f}, {2});
-    // half plus two: output should be input / 2 + 2.
-    Tensor expected_output =
-        test::AsTensor<float>({100.0f / 2 + 2, 42.0f / 2 + 2}, {2});
-
-    // Note that "x" and "y" are the actual names of the nodes in the graph.
-    // The saved manifest binds these to "input" and "output" respectively, but
-    // these tests are focused on the raw underlying session without bindings.
-    const std::vector<std::pair<string, Tensor>> inputs = {{"x", input}};
-    const std::vector<string> output_names = {"y"};
-    const std::vector<string> empty_targets;
-    std::vector<Tensor> outputs;
-
-    TF_ASSERT_OK(
-        bundle->session->Run(inputs, output_names, empty_targets, &outputs));
-
-    ASSERT_EQ(1, outputs.size());
-    const auto& single_output = outputs.at(0);
-    test::ExpectTensorEqual<float>(expected_output, single_output);
-  }
-
   void TestSessionBundleSourceAdapter(
-      const SessionBundleSourceAdapterConfig& config) {
+      const SessionBundleSourceAdapterConfig& config) const {
     std::unique_ptr<Loader> loader;
     {
       std::unique_ptr<SessionBundleSourceAdapter> adapter;
@@ -101,10 +72,10 @@ class SessionBundleSourceAdapterTest : public ::testing::Test {
     TF_ASSERT_OK(loader->EstimateResources(&second_resource_estimate));
     EXPECT_THAT(second_resource_estimate, EqualsProto(first_resource_estimate));
 
-    TF_ASSERT_OK(loader->Load(ResourceAllocation()));
+    TF_ASSERT_OK(loader->Load());
 
     const SessionBundle* bundle = loader->servable().get<SessionBundle>();
-    TestSingleRequest(bundle);
+    test_util::TestSingleRequest(bundle->session.get());
 
     loader->Unload();
   }

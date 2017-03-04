@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_SERVING_SERVABLES_TENSORFLOW_SESSION_BUNDLE_FACTORY_H_
 
 #include "tensorflow/contrib/session_bundle/session_bundle.h"
+#include "tensorflow/core/lib/core/status.h"
 #include "tensorflow_serving/batching/batching_session.h"
 #include "tensorflow_serving/batching/shared_batch_scheduler.h"
 #include "tensorflow_serving/resources/resources.pb.h"
@@ -44,11 +45,6 @@ namespace serving {
 // This class is thread-safe.
 class SessionBundleFactory {
  public:
-  // Constants used in the resource estimation heuristic. See the documentation
-  // on EstimateResourceRequirements().
-  static constexpr double kResourceEstimateRAMMultiplier = 1.5;
-  static constexpr int kResourceEstimateRAMPadBytes = 10 << 20 /* 10 MB */;
-
   static Status Create(const SessionBundleConfig& config,
                        std::unique_ptr<SessionBundleFactory>* factory);
 
@@ -58,11 +54,8 @@ class SessionBundleFactory {
 
   // Estimates the resources a session bundle will use once loaded, from its
   // export path.
-  //
-  // Uses the following crude heuristic, for now: estimated main-memory RAM =
-  // (combined size of variable file(s)) * kResourceEstimateRAMMultiplier +
-  // kResourceEstimateRAMPadBytes.
-  // TODO(b/27694447): Improve the heuristic. At a minimum, account for GPU RAM.
+  // TODO(b/33078719): remove this method after we switch all the callers to
+  // the following one.
   Status EstimateResourceRequirement(const string& path,
                                      ResourceAllocation* estimate) const;
 
@@ -72,12 +65,9 @@ class SessionBundleFactory {
   SessionBundleFactory(const SessionBundleConfig& config,
                        std::shared_ptr<Batcher> batch_scheduler);
 
-  // Wraps a batching queue with retrier around 'bundle->session'.
-  Status WrapSessionForBatching(SessionBundle* bundle);
-
   const SessionBundleConfig config_;
 
-  // A shared batch scheduler. One queue is used for each session this adapter
+  // A shared batch scheduler. One queue is used for each session this factory
   // emits. If batching is not configured, this remains null.
   std::shared_ptr<Batcher> batch_scheduler_;
 

@@ -12,30 +12,27 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+//
+// Interface for performing classification using classification messages.
 
-#include "tensorflow_serving/core/eager_load_policy.h"
+#ifndef TENSORFLOW_SERVING_APIS_CLASSIFIER_H_
+#define TENSORFLOW_SERVING_APIS_CLASSIFIER_H_
+
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow_serving/apis/classification.pb.h"
 
 namespace tensorflow {
 namespace serving {
 
-optional<AspiredVersionPolicy::ServableAction> EagerLoadPolicy::GetNextAction(
-    const std::vector<AspiredServableStateSnapshot>& all_versions) const {
-  // If there is a new aspired version, load it.
-  for (const auto& version : all_versions) {
-    if (version.is_aspired && version.state == LoaderHarness::State::kNew) {
-      return {{Action::kLoad, version.id}};
-    }
-  }
+class ClassifierInterface {
+ public:
+  virtual Status Classify(const ClassificationRequest& request,
+                          ClassificationResult* result) = 0;
 
-  // If there is no new aspired version, but a not-aspired version, unload the
-  // latter.
-  for (const auto& version : all_versions) {
-    if (!version.is_aspired && version.state == LoaderHarness::State::kReady) {
-      return {{Action::kUnload, version.id}};
-    }
-  }
-  return {};
-}
+  virtual ~ClassifierInterface() = default;
+};
 
 }  // namespace serving
 }  // namespace tensorflow
+
+#endif  // TENSORFLOW_SERVING_APIS_CLASSIFIER_H_

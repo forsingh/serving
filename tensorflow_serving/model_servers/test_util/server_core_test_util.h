@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_SERVING_MODEL_SERVERS_TEST_UTIL_SERVER_CORE_TEST_UTIL_H_
 #define TENSORFLOW_SERVING_MODEL_SERVERS_TEST_UTIL_SERVER_CORE_TEST_UTIL_H_
 
+#include <gtest/gtest.h>
 #include "tensorflow_serving/core/servable_id.h"
 #include "tensorflow_serving/model_servers/server_core.h"
 
@@ -23,20 +24,51 @@ namespace tensorflow {
 namespace serving {
 namespace test_util {
 
-// A test utility that provides access to private ServerCore members.
-class ServerCoreTestAccess {
+constexpr char kTestModelName[] = "test_model";
+constexpr int kTestModelVersion = 123;
+
+// ServerCoreTest is parameterized based on the TestType enum defined below.
+// TODO(b/32248363): remove the parameter and TestType after we switch Model
+// Server to Saved Model.
+class ServerCoreTest : public ::testing::TestWithParam<int> {
  public:
-  explicit ServerCoreTestAccess(ServerCore* core) : core_(core) {}
+  // The parameter of this test.
+  enum TestType {
+    // SessionBundle is used on export.
+    SESSION_BUNDLE,
+    // SavedModelBundle is used on export.
+    SAVED_MODEL_BACKWARD_COMPATIBILITY,
+    // SavedModelBundle is used on native Saved Model.
+    SAVED_MODEL,
+    // This should always be the last value.
+    NUM_TEST_TYPES,
+  };
 
-  // Returns the list of available servable-ids from the manager in server
-  // core.
-  std::vector<ServableId> ListAvailableServableIds() const;
+ protected:
+  // The name of the platform associated with FakeLoaderSourceAdapter.
+  static constexpr char kFakePlatform[] = "fake_servable";
 
- private:
-  ServerCore* const core_;
+  // Returns ModelServerConfig that contains test model for the fake platform.
+  ModelServerConfig GetTestModelServerConfigForFakePlatform();
+
+  // Returns ModelServerConfig that contains test model for the tensorflow
+  // platform.
+  ModelServerConfig GetTestModelServerConfigForTensorflowPlatform();
+
+  // Creates some reasonable default ServerCore options for tests.
+  ServerCore::Options GetDefaultOptions();
+
+  // Creates a ServerCore object configured with both a fake platform and the
+  // tensorflow platform, using GetDefaultOptions().
+  Status CreateServerCore(const ModelServerConfig& config,
+                          std::unique_ptr<ServerCore>* server_core);
+
+  // Returns test type. This is the parameter of this test.
+  TestType GetTestType() { return static_cast<TestType>(GetParam()); }
 };
 
 }  // namespace test_util
 }  // namespace serving
 }  // namespace tensorflow
+
 #endif  // TENSORFLOW_SERVING_MODEL_SERVERS_TEST_UTIL_SERVER_CORE_TEST_UTIL_H_

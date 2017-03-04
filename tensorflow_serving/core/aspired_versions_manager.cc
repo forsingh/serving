@@ -103,6 +103,16 @@ std::set<int64> GetVersionNumbers(
   return version_numbers;
 }
 
+// Creates a debug string for a given vector of servable versions.
+string ServableVersionsDebugString(
+    const std::vector<ServableData<std::unique_ptr<Loader>>>& versions) {
+  std::vector<string> version_strings;
+  for (const ServableData<std::unique_ptr<Loader>>& version : versions) {
+    version_strings.push_back(version.id().DebugString());
+  }
+  return str_util::Join(version_strings, ", ");
+}
+
 }  // namespace
 
 namespace internal {
@@ -141,8 +151,8 @@ Status AspiredVersionsManager::Create(
   }
   BasicManager::Options basic_manager_options;
   basic_manager_options.resource_tracker = std::move(options.resource_tracker);
-  basic_manager_options.num_load_unload_threads =
-      options.num_load_unload_threads;
+  basic_manager_options.num_load_threads = options.num_load_threads;
+  basic_manager_options.num_unload_threads = options.num_unload_threads;
   basic_manager_options.max_num_load_retries = options.max_num_load_retries;
   basic_manager_options.load_retry_interval_micros =
       options.load_retry_interval_micros;
@@ -170,6 +180,7 @@ AspiredVersionsManager::AspiredVersionsManager(
     pf_options.thread_name_prefix = "AspiredVersionsManager_ManageState_Thread";
     manage_state_thread_.reset(new PeriodicFunction(
         [this]() {
+          this->FlushServables();
           this->HandlePendingAspiredVersionsRequests();
           this->InvokePolicyAndExecuteAction();
         },
@@ -220,6 +231,8 @@ void AspiredVersionsManager::EnqueueAspiredVersionsRequest(
 
   {
     mutex_lock l(pending_aspired_versions_requests_mu_);
+    VLOG(1) << "Enqueueing aspired versions request: "
+            << ServableVersionsDebugString(versions);
     pending_aspired_versions_requests_[servable_name.ToString()] =
         std::move(versions);
   }
@@ -228,6 +241,9 @@ void AspiredVersionsManager::EnqueueAspiredVersionsRequest(
 void AspiredVersionsManager::ProcessAspiredVersionsRequest(
     const StringPiece servable_name,
     std::vector<ServableData<std::unique_ptr<Loader>>> versions) {
+  VLOG(1) << "Processing aspired versions request: "
+          << ServableVersionsDebugString(versions);
+
   const std::set<int64> next_aspired_versions = GetVersionNumbers(versions);
 
   // We gather all the servables with the servable_name and
@@ -245,6 +261,7 @@ void AspiredVersionsManager::ProcessAspiredVersionsRequest(
     // If this version is not part of the aspired versions.
     if (std::find(next_aspired_versions.begin(), next_aspired_versions.end(),
                   state_snapshot.id.version) == next_aspired_versions.end()) {
+      VLOG(1) << "Setting is_aspired=false for " << state_snapshot.id;
       basic_manager_->GetAdditionalServableState<Aspired>(state_snapshot.id)
           ->is_aspired = false;
       basic_manager_->CancelLoadServableRetry(state_snapshot.id);
@@ -266,6 +283,7 @@ void AspiredVersionsManager::ProcessAspiredVersionsRequest(
     // if this aspired version is not already present in the map.
     if (std::find(additions.begin(), additions.end(), version.id().version) !=
         additions.end()) {
+      VLOG(1) << "Adding " << version.id() << "to BasicManager";
       const Status manage_status =
           basic_manager_->ManageServableWithAdditionalState(
               std::move(version), std::unique_ptr<Aspired>(new Aspired{true}));
@@ -301,24 +319,26 @@ bool AspiredVersionsManager::ContainsAnyReaspiredVersions(
 optional<AspiredVersionPolicy::ServableAction>
 AspiredVersionsManager::GetNextAction() {
   std::vector<optional<AspiredVersionPolicy::ServableAction>> actions;
-  std::vector<AspiredServableStateSnapshot> aspired_state_snapshots;
   for (const string& servable_name :
        basic_manager_->GetManagedServableNames()) {
-    aspired_state_snapshots.clear();
+    std::vector<AspiredServableStateSnapshot> aspired_state_snapshots;
     for (const ServableStateSnapshot<Aspired>& state_snapshot :
          basic_manager_->GetManagedServableStateSnapshots<Aspired>(
              servable_name)) {
       aspired_state_snapshots.push_back(
           {state_snapshot.id, state_snapshot.state,
            state_snapshot.additional_state->is_aspired});
-      actions.emplace_back(
-          aspired_version_policy_->GetNextAction(aspired_state_snapshots));
     }
+    actions.emplace_back(
+        aspired_version_policy_->GetNextAction(aspired_state_snapshots));
   }
 
   std::sort(actions.begin(), actions.end(), CompareActions());
   const optional<AspiredVersionPolicy::ServableAction> next_action =
       !actions.empty() ? actions[0] : nullopt;
+  if (next_action) {
+    VLOG(1) << "Taking action: " << next_action->DebugString();
+  }
   return next_action;
 }
 
@@ -344,6 +364,24 @@ void AspiredVersionsManager::PerformAction(
   }
 }
 
+void AspiredVersionsManager::FlushServables() {
+  mutex_lock l(basic_manager_read_modify_write_mu_);
+  for (const string& servable_name :
+       basic_manager_->GetManagedServableNames()) {
+    for (const ServableStateSnapshot<Aspired>& state_snapshot :
+         basic_manager_->GetManagedServableStateSnapshots<Aspired>(
+             servable_name)) {
+      if ((state_snapshot.state == LoaderHarness::State::kNew ||
+           state_snapshot.state == LoaderHarness::State::kDisabled ||
+           state_snapshot.state == LoaderHarness::State::kError) &&
+          !state_snapshot.additional_state->is_aspired) {
+        VLOG(1) << "Removing " << state_snapshot.id << "from BasicManager";
+        basic_manager_->StopManagingServable(state_snapshot.id);
+      }
+    }
+  }
+}
+
 void AspiredVersionsManager::HandlePendingAspiredVersionsRequests() {
   mutex_lock l(basic_manager_read_modify_write_mu_);
   mutex_lock l2(pending_aspired_versions_requests_mu_);
@@ -361,6 +399,9 @@ void AspiredVersionsManager::HandlePendingAspiredVersionsRequests() {
     if (ContainsAnyReaspiredVersions(servable_name, versions)) {
       // Sit on it for now. We'll check again later.
       ++it;
+      VLOG(1) << "Postponing processing of aspired versions request due to "
+                 "re-aspired version(s) among: "
+              << ServableVersionsDebugString(versions);
     } else {
       ProcessAspiredVersionsRequest(servable_name, std::move(versions));
       it = pending_aspired_versions_requests_.erase(it);
@@ -379,6 +420,14 @@ void AspiredVersionsManager::InvokePolicyAndExecuteAction() {
   // NOTE: we could do action validation here.
 
   PerformAction(*next_action);
+}
+
+void AspiredVersionsManager::SetNumLoadThreads(const uint32 num_load_threads) {
+  basic_manager_->SetNumLoadThreads(num_load_threads);
+}
+
+uint32 AspiredVersionsManager::num_load_threads() const {
+  return basic_manager_->num_load_threads();
 }
 
 }  // namespace serving
