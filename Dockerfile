@@ -64,6 +64,10 @@ ENV BAZELRC /root/.bazelrc
 # Install the most recent bazel release.
 ENV BAZEL_VERSION 0.4.2
 WORKDIR /
+
+#https://github.com/tensorflow/tensorflow/issues/7048
+RUN update-ca-certificates -f
+
 RUN mkdir /bazel && \
     cd /bazel && \
     curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \
