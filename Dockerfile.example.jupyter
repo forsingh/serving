@@ -75,7 +75,13 @@ RUN mkdir /bazel && \
 
 #maintainer @avloss
 
-COPY . /serving
+RUN mkdir /serving
+
+COPY tensorflow /serving/tensorflow
+COPY tensorflow_serving /serving/tensorflow_serving
+COPY tf_models /serving/tf_models
+COPY tools /serving/tools
+COPY WORKSPACE /serving/WORKSPACE
 
 RUN cd /serving/tensorflow && \
     yes "" | ./configure
@@ -88,10 +94,8 @@ RUN pip install tensorflow
 RUN mkdir /tmp/models && \
     mkdir /root/jupyter_notebooks
 
-RUN ln -s ~/serving/tensorflow_serving/example/setup_flask_client.sh /root/setup_flask_client.sh
-
-RUN cp ~/serving/tensorflow_serving/example/test_tf_serving_flask.ipynb /root/jupyter_notebooks/
-
-
+COPY example_jupyter/setup_flask_client.sh /root/setup_flask_client.sh
+COPY example_jupyter/test_tf_serving_flask.ipynb /root/jupyter_notebooks/
 
 EXPOSE 8888 9000 5000
+CMD ["bash", "/root/setup_flask_client.sh"]
