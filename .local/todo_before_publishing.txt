@@ -1,4 +1,0 @@
-Dockerfile.devel <- update TF version
-
-add gunicorn and nginx for serving
-
