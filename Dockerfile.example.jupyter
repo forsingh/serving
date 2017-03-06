@@ -73,11 +73,25 @@ RUN mkdir /bazel && \
     cd / && \
     rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh
 
-EXPOSE 8888 9000 5000
+#maintainer @avloss
 
 COPY . /serving
 
 RUN cd /serving/tensorflow && \
-    yes "" | ./configure && \
-    cd .. && \
-    bazel build tensorflow_serving/...
+    yes "" | ./configure
+
+RUN cd /serving/ && \
+    bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/...
+
+RUN pip install tensorflow
+
+RUN mkdir /tmp/models && \
+    mkdir /root/jupyter_notebooks
+
+RUN ln -s ~/serving/tensorflow_serving/example/setup_flask_client.sh /root/setup_flask_client.sh
+
+RUN cp ~/serving/tensorflow_serving/example/test_tf_serving_flask.ipynb /root/jupyter_notebooks/
+
+
+
+EXPOSE 8888 9000 5000
