@@ -91,7 +91,8 @@ RUN cd /serving/tensorflow && \
     yes "" | ./configure
 
 RUN cd /serving/ && \
-    bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/...
+    #bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/...
+    bazel build tensorflow_serving/...
 
 RUN pip install tensorflow
 
