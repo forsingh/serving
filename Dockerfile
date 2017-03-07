@@ -1,4 +1,4 @@
-FROM avloss/tf-serving-docker-base:latest
+FROM avloss/tf-serving-jupyter-flask-base:latest
 
 MAINTAINER Anton Loss @avloss
 
