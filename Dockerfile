@@ -8,7 +8,7 @@ MAINTAINER Anton Loss @avloss
 
 ## unlimited resources to build on the server (dockerhub)
 RUN cd /serving/ && \
-    bazel build tensorflow_serving/...
+    bazel build tensorflow_serving/model_servers/tensorflow_model_server tensorflow_serving/example/flask_client
 
 RUN pip install tensorflow
 
