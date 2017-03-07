@@ -40,8 +40,12 @@ COPY WORKSPACE /serving/WORKSPACE
 RUN cd /serving/tensorflow && \
     yes "" | ./configure
 
+## limited resources to build locally on my mac!
+#RUN cd /serving/ && \
+#    bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/...
+
+## unlimited resources to build on the server (dockerhub)
 RUN cd /serving/ && \
-    #bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/...
     bazel build tensorflow_serving/...
 
 RUN pip install tensorflow
