@@ -1,56 +1,6 @@
-FROM ubuntu:16.04
+FROM avloss/tf-serving-docker-base:latest
 
-MAINTAINER Anton Loss @avloss (originally Jeremiah Harmsen <jeremiah@google.com>)
-
-RUN apt-get update && apt-get install -y \
-        build-essential \
-        curl \
-        git \
-        libfreetype6-dev \
-        libpng12-dev \
-        libzmq3-dev \
-        pkg-config \
-        python-dev \
-        python-numpy \
-        python-pip \
-        software-properties-common \
-        swig \
-        zip \
-        zlib1g-dev \
-        libcurl3-dev \
-        vim \
-        && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \
-    python get-pip.py && \
-    rm get-pip.py
-
-# Set up grpc
-
-RUN pip install enum34 futures mock six && \
-    pip install --pre 'protobuf>=3.0.0a3' && \
-    pip install -i https://testpypi.python.org/simple --pre grpcio && \
-    pip install flask && \
-    pip install jupyter && \
-    pip install scipy && \
-    pip install scikit-learn && \
-    pip install requests
-
-# Set up Bazel.
-
-# We need to add a custom PPA to pick up JDK8, since trusty doesn't
-# have an openjdk8 backport.  openjdk-r is maintained by a reliable contributor:
-# Matthias Klose (https://launchpad.net/~doko).  It will do until
-# we either update the base image beyond 14.04 or openjdk-8 is
-# finally backported to trusty; see e.g.
-#   https://bugs.launchpad.net/trusty-backports/+bug/1368094
-RUN add-apt-repository -y ppa:openjdk-r/ppa && \
-    apt-get update && \
-    apt-get install -y openjdk-8-jdk openjdk-8-jre-headless && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+MAINTAINER Anton Loss @avloss
 
 # Running bazel inside a `docker build` command causes trouble, cf:
 #   https://github.com/bazelbuild/bazel/issues/134
