@@ -3,12 +3,16 @@ import urllib
 
 import flask
 import numpy as np
+from waitress import serve
+
 
 from grpc.beta import implementations
 import tensorflow as tf
 
 from tensorflow_serving.apis import predict_pb2
 from tensorflow_serving.apis import prediction_service_pb2
+
+from google.protobuf.json_format import MessageToJson
 
 app = flask.Flask(__name__)
 
@@ -31,8 +35,12 @@ def model_prediction():
         request.inputs[k].CopyFrom(
             tf.contrib.util.make_tensor_proto(v))
     result = stub.Predict(request, 10.0)  # 10 secs timeout
-    return str(result)
+    return MessageToJson(result)
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+    #slow and unreliable (dev purpouses)
+    #app.run(host="0.0.0.0", port=5000)
+
+    #using waitrsess server instead
+    serve(app, host='0.0.0.0', port=5000)
