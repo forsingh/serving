@@ -233,7 +233,6 @@ number = mnist.train.next_batch(1)[0]
 
 plt.imshow(number.reshape(28,28))
 ```
-
     Extracting MNIST_data/train-images-idx3-ubyte.gz
     Extracting MNIST_data/train-labels-idx1-ubyte.gz
     Extracting MNIST_data/t10k-images-idx3-ubyte.gz
