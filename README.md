@@ -3,7 +3,7 @@
 
 TensorFlow **SERVING** is Googles' recommended way to deploy TensorFlow models. Without proper computer engineering background, it can be quite intimidating, even for people who feel comfortable with TensorFlow itself. Few things that I've found particularly hard were:
 - Tutorial examples have C++ code (which I don't know)
-- Tutorials have Kubernetes, gRPG, Bezel (some of which I saw for the first time)
+- Tutorials have Kubernetes, gRPC, Bezel (some of which I saw for the first time)
 - It needs to be compiled. That process takes forever!
 
 After all, it worked just fine. Here I present an easiest possible way to deploy your models with TensorFlow Serving. You will have your self-built model running inside TF-Serving by the end of this tutorial. It will be scalable, and you will be able to query it via REST.
