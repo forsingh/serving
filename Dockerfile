@@ -99,7 +99,7 @@ RUN pip install tensorflow matplotlib
 RUN mkdir -p /tmp/models && \
     mkdir -p /root/jupyter_notebooks
 
-COPY example_jupyter/setup.sh /root/setup_flask_client.sh
+COPY example_jupyter/setup.sh /root/setup.sh
 COPY example_jupyter/tf_serving_rest_example.ipynb /root/jupyter_notebooks/
 
 EXPOSE 8888 9000 5000
