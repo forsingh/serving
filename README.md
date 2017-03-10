@@ -283,7 +283,7 @@ int(test_flask_client(number)["outputs"]["pred"]["int64Val"][0])
 
 ## Done!
 
-And that's it! Now you got Docker Container which is running you TensorFlow model with Tensorflow Serving. This model can be queried via `REST` (as we just did), or via `gRPC` (port 9000).
+And that's it! Now your got Docker Container which is running you TensorFlow model with Tensorflow Serving. This model can be queried via `REST` (as we just did), or via `gRPC` (port 9000).
 
 It is easy to export this as Docker Image so that it can be run elsewhere. In your host console do the following:
 
