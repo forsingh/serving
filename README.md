@@ -14,7 +14,7 @@ The Tutorial uses the Docker image. You can use Kitematic to start the image: **
 
 You can start Docker Container from Kitematic, or use this command from console:
 
-`docker run --rm -it -p 8888:8888 -p 9000:9000 -p 5000:5000  quay.io/avloss/tensorflow-serving-rest`
+`docker run --rm -it -p 8888:8888 -p 9000:9000 -p 8915:8915  quay.io/avloss/tensorflow-serving-rest`
 
 Once it's running, please navigate to http://localhost:8888/notebooks/tf_serving_rest_example.ipynb. (Use different port if using Kitematic)
 
@@ -209,7 +209,7 @@ import cPickle as pickle
 import requests
 
 def test_flask_client(x):
-    URL = "http://localhost:5000/model_prediction"
+    URL = "http://localhost:8915/model_prediction"
 
     s = pickle.dumps({"x":x}, protocol=0)
 
@@ -299,6 +299,6 @@ Now your Docker image (with the model inside) is saved into a `tar` file, which 
 
 `docker load --input my_name.my_model.version1.tar`
 
-`docker run --rm -it -p 8888:8888 -p 9000:9000 -p 5000:5000  my_name/my_model:version1`
+`docker run --rm -it -p 8888:8888 -p 9000:9000 -p 8915:8915  my_name/my_model:version1`
 
 And now you got your model running on a new server! Hope this works for you!

@@ -102,5 +102,5 @@ RUN mkdir -p /tmp/models && \
 COPY example_jupyter/setup.sh /root/setup.sh
 COPY example_jupyter/tf_serving_rest_example.ipynb /root/jupyter_notebooks/
 
-EXPOSE 9000 5000 8888
+EXPOSE 9000 8915 8888
 CMD /root/setup.sh
