@@ -8,13 +8,13 @@ TensorFlow **SERVING** is Googles' recommended way to deploy TensorFlow models. 
 
 After all, it worked just fine. Here I present an easiest possible way to deploy your models with TensorFlow Serving. You will have your self-built model running inside TF-Serving by the end of this tutorial. It will be scalable, and you will be able to query it via REST.
 
-The Tutorial uses the Docker image. You can use Kitematic to start the image: **`avloss/tf-serving-jupyter-flask`**.
+The Tutorial uses the Docker image. You can use Kitematic to start the image: **`avloss/tensorflow-serving-rest`**.
 
-*At first, I tried building it on "DockerHub" - but it hit the limit of 2 hours, so I had to use https://quay.io. I've uploaded finished result to DockerHub manually, but please feel free to pull from https://quay.io/repository/avloss/tf-serving-jupyter-flask in case you want to make sure it's what's it says it is.*
+*At first, I tried building it on "DockerHub" - but it hit the limit of 2 hours, so I had to use https://quay.io. I've uploaded finished result to DockerHub manually, but please feel free to pull from https://quay.io/repository/avloss/tensorflow-serving-rest in case you want to make sure it's what's it says it is.*
 
 You can start Docker Container from Kitematic, or use this command from console:
 
-`docker run --rm -it -p 8888:8888 -p 9000:9000 -p 5000:5000  quay.io/avloss/tf-serving-jupyter-flask`
+`docker run --rm -it -p 8888:8888 -p 9000:9000 -p 5000:5000  quay.io/avloss/tensorflow-serving-rest`
 
 Once it's running, please navigate to http://localhost:8888/notebooks/tf_serving_rest_example.ipynb. (Use different port if using Kitematic)
 

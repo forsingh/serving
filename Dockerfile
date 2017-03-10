@@ -103,4 +103,4 @@ COPY example_jupyter/setup.sh /root/setup.sh
 COPY example_jupyter/tf_serving_rest_example.ipynb /root/jupyter_notebooks/
 
 EXPOSE 8888 9000 5000
-CMD "bash /root/setup.sh"
+CMD /root/setup.sh
