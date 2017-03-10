@@ -1,5 +1,3 @@
-FROM avloss/tf-serving-jupyter-flask-base:latest
-
 FROM ubuntu:16.04
 
 MAINTAINER Anton Loss @avloss (originally Jeremiah Harmsen <jeremiah@google.com>)
