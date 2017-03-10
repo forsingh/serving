@@ -92,21 +92,17 @@ RUN cd /serving/tensorflow && \
     yes "" | ./configure
 
 RUN pip install waitress
-## limited resources to build locally on my mac!
+## limiting build resources - takes longer, but doesn't fail!
 RUN cd /serving/ && \
     bazel build -c opt --local_resources 2048,.5,1.0 tensorflow_serving/...
 
-## unlimited resources to build on the server (dockerhub)
-#RUN cd /serving/ && \
-#    bazel build tensorflow_serving/model_servers/tensorflow_model_server tensorflow_serving/example/flask_client
-
 RUN pip install tensorflow matplotlib
 
-RUN mkdir /tmp/models && \
-    mkdir /root/jupyter_notebooks
+RUN mkdir -p /tmp/models && \
+    mkdir -p /root/jupyter_notebooks
 
-COPY example_jupyter/setup_flask_client.sh /root/setup_flask_client.sh
-COPY example_jupyter/test_tf_serving_flask.ipynb /root/jupyter_notebooks/
+COPY example_jupyter/setup.sh /root/setup_flask_client.sh
+COPY example_jupyter/tf_serving_rest_example.ipynb /root/jupyter_notebooks/
 
 EXPOSE 8888 9000 5000
-CMD ["bash", "/root/setup_flask_client.sh"]
+CMD "bash /root/setup.sh"
