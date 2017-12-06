@@ -62,7 +62,7 @@ RUN echo "build --spawn_strategy=standalone --genrule_strategy=standalone" \
     >>/root/.bazelrc
 ENV BAZELRC /root/.bazelrc
 # Install the most recent bazel release.
-ENV BAZEL_VERSION 0.4.2
+ENV BAZEL_VERSION 0.5.4
 WORKDIR /
 
 #https://github.com/tensorflow/tensorflow/issues/7048
